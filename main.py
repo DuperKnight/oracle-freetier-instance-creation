@@ -28,13 +28,14 @@ SSH_AUTHORIZED_KEYS_FILE = os.getenv("SSH_AUTHORIZED_KEYS_FILE", "").strip()
 OCI_IMAGE_ID = os.getenv("OCI_IMAGE_ID", None).strip() if os.getenv("OCI_IMAGE_ID") else None
 OCI_COMPUTE_SHAPE = os.getenv("OCI_COMPUTE_SHAPE", ARM_SHAPE).strip()
 SECOND_MICRO_INSTANCE = os.getenv("SECOND_MICRO_INSTANCE", 'False').strip().lower() == 'true'
-OCI_SUBNET_ID = os.getenv("OCI_SUBNET_ID", None).strip() if os.getenv("OCI_SUBNET_ID") else None
 OPERATING_SYSTEM = os.getenv("OPERATING_SYSTEM", "").strip()
 OS_VERSION = os.getenv("OS_VERSION", "").strip()
 ASSIGN_PUBLIC_IP = os.getenv("ASSIGN_PUBLIC_IP", "false").strip()
 BOOT_VOLUME_SIZE = os.getenv("BOOT_VOLUME_SIZE", "50").strip()
-BOOT_VOLUME_ID = os.getenv("BOOT_VOLUME_ID", "").strip()
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK", "").strip()
+VCN_NAME = os.getenv("VCN_NAME", "").strip()
+SUBNET_NAME = os.getenv("SUBNET_NAME", "").strip()
+BOOT_VOLUME_NAME = os.getenv("BOOT_VOLUME_NAME", "").strip()
 
 # Read the configuration from oci_config file
 config = configparser.ConfigParser()
@@ -47,7 +48,7 @@ try:
                         for confg_var in [OCI_CONFIG, OCT_FREE_AD,WAIT_TIME,
                                 SSH_AUTHORIZED_KEYS_FILE, OCI_IMAGE_ID, 
                                 OCI_COMPUTE_SHAPE, SECOND_MICRO_INSTANCE, 
-                                OCI_SUBNET_ID, OS_VERSION, DISCORD_WEBHOOK]
+                                OS_VERSION, DISCORD_WEBHOOK, VCN_NAME, SUBNET_NAME, BOOT_VOLUME_NAME]
                         )
     config_has_spaces = any(' ' in value for section in config.sections() 
                             for _, value in config.items(section))
@@ -80,6 +81,7 @@ config = oci.config.from_file(oci_config_path)
 iam_client = oci.identity.IdentityClient(config)
 network_client = oci.core.VirtualNetworkClient(config)
 compute_client = oci.core.ComputeClient(config)
+blockstorage_client = oci.core.BlockstorageClient(config)
 
 IMAGE_LIST_KEYS = [
     "lifecycle_state",
@@ -297,6 +299,26 @@ def send_discord_message(message):
             logging.error("Failed to send Discord message: %s", e)
 
 
+def search_for_resource(client, method, compartment_id, resource_name=None):
+    """Search for a resource by name or return the first resource if no name is provided.
+
+    Args:
+        client: The OCI client instance.
+        method (str): The method to call on the OCI client.
+        compartment_id (str): The compartment ID to search in.
+        resource_name (str, optional): The name of the resource to search for. Defaults to None.
+
+    Returns:
+        dict: The resource data returned from the OCI service.
+    """
+    resources = execute_oci_command(client, method, compartment_id=compartment_id)
+    if resource_name:
+        resource = next((res for res in resources if res.display_name == resource_name), None)
+    else:
+        resource = resources[0] if resources else None
+    return resource
+
+
 def launch_instance():
     """Launches an OCI Compute instance using the specified parameters.
 
@@ -317,16 +339,22 @@ def launch_instance():
     oci_ad_names = itertools.cycle(oci_ad_name)
     logging.info("OCI_AD_NAME: %s", oci_ad_name)
 
-    # Step 3 - Get Subnet ID
-    oci_subnet_id = OCI_SUBNET_ID
-    if not oci_subnet_id:
-        subnets = execute_oci_command(network_client,
-                                      "list_subnets",
-                                      compartment_id=oci_tenancy)
-        oci_subnet_id = subnets[0].id
+    # Step 3 - Get VCN ID
+    vcn = search_for_resource(network_client, "list_vcns", oci_tenancy, VCN_NAME)
+    oci_vcn_id = vcn.id if vcn else None
+    logging.info("OCI_VCN_ID: %s", oci_vcn_id)
+
+    # Step 4 - Get Subnet ID
+    subnet = search_for_resource(network_client, "list_subnets", oci_tenancy, SUBNET_NAME)
+    oci_subnet_id = subnet.id if subnet else None
     logging.info("OCI_SUBNET_ID: %s", oci_subnet_id)
 
-    # Step 4 - Get Image ID of Compute Shape
+    # Step 5 - Get Boot Volume ID
+    boot_volume = search_for_resource(blockstorage_client, "list_boot_volumes", oci_tenancy, BOOT_VOLUME_NAME)
+    oci_boot_volume_id = boot_volume.id if boot_volume else None
+    logging.info("OCI_BOOT_VOLUME_ID: %s", oci_boot_volume_id)
+
+    # Step 6 - Get Image ID of Compute Shape
     if not OCI_IMAGE_ID:
         images = execute_oci_command(
             compute_client,
@@ -350,7 +378,7 @@ def launch_instance():
 
     ssh_public_key = read_or_generate_ssh_public_key(SSH_AUTHORIZED_KEYS_FILE)
 
-    # Step 5 - Launch Instance if it's not already exist and running
+    # Step 7 - Launch Instance if it's not already exist and running
     instance_exist_flag = check_instance_state_and_write(oci_tenancy, OCI_COMPUTE_SHAPE, tries=1)
 
     if OCI_COMPUTE_SHAPE == "VM.Standard.A1.Flex":
@@ -360,10 +388,10 @@ def launch_instance():
 
     while not instance_exist_flag:
         try:
-            if BOOT_VOLUME_ID:
+            if oci_boot_volume_id:
                 source_details = oci.core.models.InstanceSourceViaBootVolumeDetails(
                     source_type="bootVolume",
-                    boot_volume_id=BOOT_VOLUME_ID
+                    boot_volume_id=oci_boot_volume_id
                 )
             else:
                 source_details = oci.core.models.InstanceSourceViaImageDetails(
@@ -417,6 +445,8 @@ def launch_instance():
                 "message": srv_err.message,
             }
             handle_errors("launch_instance", data, logging_step5)
+
+        time.sleep(60)  # Wait for 60 seconds before the next attempt
 
 
 if __name__ == "__main__":
