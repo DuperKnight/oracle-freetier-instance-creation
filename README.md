@@ -11,7 +11,7 @@
 
 This project provides Python and shell scripts to automate the creation of Oracle Free Tier ARM instances (4 OCPU, 24 GB RAM) or the Oracle Free Tier AMD instance (1 OCPU, 1 GB RAM) with minimal manual intervention. Acquiring resources in certain availability domains can be challenging due to high demand, and repeatedly attempting creation through the Oracle console is impractical. While other methods like OCI CLI and PHP are available (linked at the end), this solution aims to streamline the process by implementing it in Python.
 
-The script attempts to create an instance every 60 seconds or as per the `REQUEST_WAIT_TIME_SECS` variable specified in the `oci.env` file until the instance is successfully created. Upon completion, a file named `INSTANCE_CREATED` is generated in the project directory, containing details about the newly created instance. Additionally, you can configure the script to send a Gmail notification upon instance creation.
+The script attempts to create an instance every 60 seconds or as per the `REQUEST_WAIT_TIME_SECS` variable specified in the `oci.env` file until the instance is successfully created. Upon completion, a file named `INSTANCE_CREATED` is generated in the project directory, containing details about the newly created instance.
 
 **Note: This script doesn't configure a public IP by default; you need to configure it post the creation of the instance from the console. (Planning on automating it soon)**
 
@@ -20,7 +20,6 @@ In short, this script is another way to bypass the "Out of host capacity" or "Ou
 ## Features
 - Single file needs to be run after basic setup
 - Configurable wait time, OCPU, RAM, DISPLAY_NAME
-- Gmail notification
 - SSH keys for ARM instances can be automatically created
 - OS configuration based on Image ID or OS and version
 - Compute shape configuration
@@ -30,7 +29,6 @@ In short, this script is another way to bypass the "Out of host capacity" or "Ou
 - **OCI API Key (Private Key) & Config Details**: Follow this [Oracle API Key Generation link](https://graph.org/Oracle-API-Key-Generation-12-11) to create the necessary API key and config details.
  - Note: Typically the API Key can be generated from your profile [page](https://cloud.oracle.com/identity/domains/my-profile/api-keys) > API Keys (left) > Add API Key
 - **OCI Free Availability Domain**: Identify the eligible always-free tier availability domain during instance creation.
-- **Gmail App Passkey (Optional)**: If you want to receive an email notification after instance creation and have two-factor authentication enabled, follow this [Google App's Password Generation link](https://graph.org/Google-App-Passwords-Generation-12-11) to create a custom app and obtain the passkey.
 
 ## Setup
 
@@ -54,7 +52,7 @@ In short, this script is another way to bypass the "Out of host capacity" or "Ou
     ./setup_env.sh
     ```
 
-    This script will guide you through the process of configuring your instance settings, including the instance name, compute shape, optional Gmail notifications, and more.
+    This script will guide you through the process of configuring your instance settings, including the instance name, compute shape, and more.
 
     > [!Note]
     > If an `oci.env` file already exists, the script will create a backup of the current file as `oci.env.bak`.
@@ -146,9 +144,7 @@ flowchart TD
 - `OS_VERSION`: Exact version of the operating system
 - `ASSIGN_PUBLIC_IP`: Automatically assign an ephemeral public IP address
 - `BOOT_VOLUME_SIZE`: Size of boot volume in GB, values below 50 will be ignored and default to 50.
-- `NOTIFY_EMAIL`: Make it True if you want to get notified and provide email and password
-- `EMAIL`: Only Gmail is allowed, the same email will be used for *FROM* and *TO*
-- `EMAIL_PASSWORD`: If two-factor authentication is set, create an App Password and specify it, not the email password. Direct password will work if no two-factor authentication is configured for the email.
+- `BOOT_VOLUME_ID`: The `OCID` of an existing boot volume to be used when creating an instance.
 - `DISCORD_WEBHOOK_URL`: URL of the Discord webhook for notifications (optional)
 
 ## Discord Webhook Notifications
