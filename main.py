@@ -3,11 +3,8 @@ import itertools
 import json
 import logging
 import os
-import smtplib
 import sys
 import time
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Union
 
@@ -36,9 +33,7 @@ OPERATING_SYSTEM = os.getenv("OPERATING_SYSTEM", "").strip()
 OS_VERSION = os.getenv("OS_VERSION", "").strip()
 ASSIGN_PUBLIC_IP = os.getenv("ASSIGN_PUBLIC_IP", "false").strip()
 BOOT_VOLUME_SIZE = os.getenv("BOOT_VOLUME_SIZE", "50").strip()
-NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL", 'False').strip().lower() == 'true'
-EMAIL = os.getenv("EMAIL", "").strip()
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "").strip()
+BOOT_VOLUME_ID = os.getenv("BOOT_VOLUME_ID", "").strip()
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK", "").strip()
 
 # Read the configuration from oci_config file
@@ -52,8 +47,7 @@ try:
                         for confg_var in [OCI_CONFIG, OCT_FREE_AD,WAIT_TIME,
                                 SSH_AUTHORIZED_KEYS_FILE, OCI_IMAGE_ID, 
                                 OCI_COMPUTE_SHAPE, SECOND_MICRO_INSTANCE, 
-                                OCI_SUBNET_ID, OS_VERSION, NOTIFY_EMAIL,EMAIL,
-                                EMAIL_PASSWORD, DISCORD_WEBHOOK]
+                                OCI_SUBNET_ID, OS_VERSION, DISCORD_WEBHOOK]
                         )
     config_has_spaces = any(' ' in value for section in config.sections() 
                             for _, value in config.items(section))
@@ -109,43 +103,6 @@ def write_into_file(file_path, data):
         file_writer.write(data)
 
 
-def send_email(subject, body, email, password):
-    """Send an HTML email using the SMTP protocol.
-
-    Args:
-        subject (str): The subject of the email.
-        body (str): The HTML body/content of the email.
-        email (str): The sender's email address.
-        password (str): The sender's email password or app-specific password.
-
-    Raises:
-        smtplib.SMTPException: If an error occurs during the SMTP communication.
-    """
-    # Set up the MIME
-    message = MIMEMultipart()
-    message["Subject"] = subject
-    message["From"] = email
-    message["To"] = email
-
-    # Attach HTML content to the email
-    html_body = MIMEText(body, "html")
-    message.attach(html_body)
-
-    # Connect to the SMTP server
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        try:
-            # Start TLS for security
-            server.starttls()
-            # Login to the server
-            server.login(email, password)
-            # Send the email
-            server.sendmail(email, email, message.as_string())
-        except smtplib.SMTPException as mail_err:
-            # Handle SMTP exceptions (e.g., authentication failure, connection issues)
-            logging.error("Error while sending email: %s", mail_err)
-            raise
-
-
 def list_all_instances(compartment_id):
     """Retrieve a list of all instances in the specified compartment.
 
@@ -157,27 +114,6 @@ def list_all_instances(compartment_id):
     """
     list_instances_response = compute_client.list_instances(compartment_id=compartment_id)
     return list_instances_response.data
-
-
-def generate_html_body(instance):
-    """Generate HTML body for the email with instance details.
-
-    Args:
-        instance (dict): The instance dictionary returned from the OCI service.
-
-    Returns:
-        str: HTML body for the email.
-    """
-    # Replace placeholders with instance details
-    with open('email_content.html', 'r', encoding='utf-8') as email_temp:
-        html_template = email_temp.read()
-    html_body = html_template.replace('&lt;INSTANCE_ID&gt;', instance.id)
-    html_body = html_body.replace('&lt;DISPLAY_NAME&gt;', instance.display_name)
-    html_body = html_body.replace('&lt;AD&gt;', instance.availability_domain)
-    html_body = html_body.replace('&lt;SHAPE&gt;', instance.shape)
-    html_body = html_body.replace('&lt;STATE&gt;', instance.lifecycle_state)
-
-    return html_body
 
 
 def create_instance_details_file_and_notify(instance, shape=ARM_SHAPE):
@@ -199,12 +135,6 @@ def create_instance_details_file_and_notify(instance, shape=ARM_SHAPE):
     body = arm_body if shape == ARM_SHAPE else micro_body
     write_into_file('INSTANCE_CREATED', body)
 
-    # Generate HTML body for email
-    html_body = generate_html_body(instance)
-
-    if NOTIFY_EMAIL:
-        send_email('OCI INSTANCE CREATED', html_body, EMAIL, EMAIL_PASSWORD)
-
 
 def notify_on_failure(failure_msg):
     """Notifies users when the Instance Creation Failed due to an error that's
@@ -223,8 +153,6 @@ def notify_on_failure(failure_msg):
         f"{failure_msg}"
     )
     write_into_file('UNHANDLED_ERROR.log', mail_body)
-    if NOTIFY_EMAIL:
-        send_email('OCI INSTANCE CREATION SCRIPT: FAILED DUE TO AN ERROR', mail_body, EMAIL, EMAIL_PASSWORD)
 
 
 def check_instance_state_and_write(compartment_id, shape, states=('RUNNING', 'PROVISIONING'),
@@ -432,6 +360,18 @@ def launch_instance():
 
     while not instance_exist_flag:
         try:
+            if BOOT_VOLUME_ID:
+                source_details = oci.core.models.InstanceSourceViaBootVolumeDetails(
+                    source_type="bootVolume",
+                    boot_volume_id=BOOT_VOLUME_ID
+                )
+            else:
+                source_details = oci.core.models.InstanceSourceViaImageDetails(
+                    source_type="image",
+                    image_id=oci_image_id,
+                    boot_volume_size_in_gbs=boot_volume_size,
+                )
+
             launch_instance_response = compute_client.launch_instance(
                 launch_instance_details=oci.core.models.LaunchInstanceDetails(
                     availability_domain=next(oci_ad_names),
@@ -451,11 +391,7 @@ def launch_instance():
                         are_legacy_imds_endpoints_disabled=False
                     ),
                     shape_config=shape_config,
-                    source_details=oci.core.models.InstanceSourceViaImageDetails(
-                        source_type="image",
-                        image_id=oci_image_id,
-                        boot_volume_size_in_gbs=boot_volume_size,
-                    ),
+                    source_details=source_details,
                     metadata={
                         "ssh_authorized_keys": ssh_public_key},
                 )
