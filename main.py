@@ -24,7 +24,6 @@ OCI_CONFIG = os.getenv("OCI_CONFIG", "").strip()
 OCT_FREE_AD = os.getenv("OCT_FREE_AD", "").strip()
 DISPLAY_NAME = os.getenv("DISPLAY_NAME", "").strip()
 WAIT_TIME = int(os.getenv("REQUEST_WAIT_TIME_SECS", "0").strip())
-SSH_AUTHORIZED_KEYS_FILE = os.getenv("SSH_AUTHORIZED_KEYS_FILE", "").strip()
 OCI_IMAGE_ID = os.getenv("OCI_IMAGE_ID", None).strip() if os.getenv("OCI_IMAGE_ID") else None
 OCI_COMPUTE_SHAPE = os.getenv("OCI_COMPUTE_SHAPE", ARM_SHAPE).strip()
 SECOND_MICRO_INSTANCE = os.getenv("SECOND_MICRO_INSTANCE", 'False').strip().lower() == 'true'
@@ -46,7 +45,7 @@ try:
         raise ValueError(f"{OCI_COMPUTE_SHAPE} is not an acceptable shape")
     env_has_spaces = any(isinstance(confg_var, str) and " " in confg_var
                         for confg_var in [OCI_CONFIG, OCT_FREE_AD,WAIT_TIME,
-                                SSH_AUTHORIZED_KEYS_FILE, OCI_IMAGE_ID, 
+                                OCI_IMAGE_ID, 
                                 OCI_COMPUTE_SHAPE, SECOND_MICRO_INSTANCE, 
                                 OS_VERSION, DISCORD_WEBHOOK, VCN_NAME, SUBNET_NAME, BOOT_VOLUME_NAME]
                         )
@@ -251,43 +250,6 @@ def execute_oci_command(client, method, *args, **kwargs):
             handle_errors(args, data, logging_step5)
 
 
-def generate_ssh_key_pair(public_key_file: Union[str, Path], private_key_file: Union[str, Path]):
-    """Generates an SSH key pair and saves them to the specified files.
-
-    Args:
-        public_key_file :file to save the public key.
-        private_key_file : The file to save the private key.
-    """
-    key = paramiko.RSAKey.generate(2048)
-    key.write_private_key_file(private_key_file)
-    # Save public key to file
-    write_into_file(public_key_file, (f"ssh-rsa {key.get_base64()} "
-                                      f"{Path(public_key_file).stem}_auto_generated"))
-
-
-def read_or_generate_ssh_public_key(public_key_file: Union[str, Path]):
-    """Reads the SSH public key from the file if it exists, else generates and reads it.
-
-    Args:
-        public_key_file: The file containing the public key.
-
-    Returns:
-        Union[str, Path]: The SSH public key.
-    """
-    public_key_path = Path(public_key_file)
-
-    if not public_key_path.is_file():
-        logging.info("SSH key doesn't exist... Generating SSH Key Pair")
-        public_key_path.parent.mkdir(parents=True, exist_ok=True)
-        private_key_path = public_key_path.with_name(f"{public_key_path.stem}_private")
-        generate_ssh_key_pair(public_key_path, private_key_path)
-
-    with open(public_key_path, "r", encoding="utf-8") as pub_key_file:
-        ssh_public_key = pub_key_file.read()
-
-    return ssh_public_key
-
-
 def send_discord_message(message):
     """Send a message to Discord using the webhook URL if available."""
     if DISCORD_WEBHOOK:
@@ -376,8 +338,6 @@ def launch_instance():
 
     boot_volume_size = max(50, int(BOOT_VOLUME_SIZE))
 
-    ssh_public_key = read_or_generate_ssh_public_key(SSH_AUTHORIZED_KEYS_FILE)
-
     # Step 7 - Launch Instance if it's not already exist and running
     instance_exist_flag = check_instance_state_and_write(oci_tenancy, OCI_COMPUTE_SHAPE, tries=1)
 
@@ -420,8 +380,7 @@ def launch_instance():
                     ),
                     shape_config=shape_config,
                     source_details=source_details,
-                    metadata={
-                        "ssh_authorized_keys": ssh_public_key},
+                    metadata={},
                 )
             )
             if launch_instance_response.status == 200:
