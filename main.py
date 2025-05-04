@@ -35,6 +35,7 @@ ASSIGN_PUBLIC_IP = os.getenv("ASSIGN_PUBLIC_IP", "false").strip()
 BOOT_VOLUME_SIZE = os.getenv("BOOT_VOLUME_SIZE", "50").strip()
 BOOT_VOLUME_ID = os.getenv("BOOT_VOLUME_ID", "").strip()
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK", "").strip()
+USE_EXISTING_BOOT_VOLUME = os.getenv("USE_EXISTING_BOOT_VOLUME", "false").strip().lower() == 'true'
 
 # Read the configuration from oci_config file
 config = configparser.ConfigParser()
@@ -360,7 +361,9 @@ def launch_instance():
 
     while not instance_exist_flag:
         try:
-            if BOOT_VOLUME_ID:
+            if USE_EXISTING_BOOT_VOLUME:
+                if not BOOT_VOLUME_ID:
+                    raise ValueError("BOOT_VOLUME_ID must be provided if USE_EXISTING_BOOT_VOLUME is set to true")
                 source_details = oci.core.models.InstanceSourceViaBootVolumeDetails(
                     source_type="bootVolume",
                     boot_volume_id=BOOT_VOLUME_ID
